@@ -1,1 +1,113 @@
+#include <Wire.h>  // I2C Communication (for IMU sensor)
+#include <Encoder.h> // Optional: If using an encoder for cadence
 
+// Sensor Functions
+
+// Speed Sens
+float getSpeed() {
+  // Read speed from a real speed sensor (Hall effect or optical sensor)
+  int pulseCount = digitalRead(3); //pin3
+  float wheelCircumference = 2.1;  // Wheel circum in meters
+  float speed = (pulseCount * wheelCircumference) / 0.1; // Speed m/s
+  speed = speed * 3.6;  // to km/h
+  return speed;
+}
+
+// Slope (IMU)
+float getSlope() {
+  // Get slope from an IMU sensor (e.g., MPU6050)
+  int slope = analogRead(A0);  // Connected to pin A0
+  float slopeAngle = map(slope, 0, 1023, -45, 45);  // Conv to -45° to 45° range
+  return slopeAngle;
+}
+
+// Cadence
+int getCadence() {
+  // Read data from the cadence sensor
+  // Here we are simply measuring the pedal rotation speed
+  int cadence = analogRead(A1);  // Cadence sensor at pin A1
+  return cadence;
+}
+
+// Brake
+bool isBrakePressed() {
+  return digitalRead(2) == HIGH;  // Brake sensor pin
+}
+
+// Settings opt
+int regenSpeedThreshold = 20;    // Regen start speed threshold (km/h)
+float regenSlopeThreshold = -3.0;  // Regen start slope threshold (degrees)
+int regenPWM = 180;              // Regen PWM intensity (0-255)
+String regenMode = "auto";       // Modes: "manual", "semi-auto", "auto"
+bool pedalOverride = true;       // If pedal is turning, regen is disabled
+
+// Pin Definitions
+const int regenPin = 9;  // PWM output pin for regen
+const int brakePin = 2;  // Digital input pin for brake sensor
+const int speedPin = 3;  // Speed sensor input pin
+
+// Setup
+void setup() {
+  pinMode(regenPin, OUTPUT);  // Regen PWM pin
+  pinMode(brakePin, INPUT);   // Brake lever
+  pinMode(speedPin, INPUT);   // Speed sensor pin
+  Serial.begin(9600);         // For monitoring
+}
+
+// Regen Functions
+void startRegen(int intensity) {
+  analogWrite(regenPin, intensity);  // Start regen braking
+  Serial.println("Regen ACTIVE");
+}
+
+void stopRegen() {
+  analogWrite(regenPin, 0);  // Stop regen
+  Serial.println("Regen OFF");
+}
+
+// Main Loop
+void loop() {
+  // Read sensor data
+  float speed = getSpeed();  // Speed data
+  float slope = getSlope();  // Slope data
+  bool brake = isBrakePressed();  // Check brake status
+  bool pedaling = (getCadence() > 0);  // if pedaling
+
+  // Print data to serial monitor
+  Serial.print("Speed: "); Serial.print(speed);
+  Serial.print(" | Slope: "); Serial.print(slope);
+  Serial.print(" | Brake: "); Serial.print(brake);
+  Serial.print(" | Pedaling: "); Serial.println(pedaling);
+
+  // Mode Handling
+  if (regenMode == "manual") {
+    // Manual mode: Regen active only with brake
+    if (brake) {
+      startRegen(regenPWM);
+    } else {
+      stopRegen();
+    }
+
+  } else if (regenMode == "semi-auto") {
+    // Semi-auto mode: Regen starts with speed or slope threshold
+    if ((speed >= regenSpeedThreshold || slope <= regenSlopeThreshold) && !pedaling) {
+      startRegen(regenPWM);
+    } else {
+      stopRegen();
+    }
+
+  } else if (regenMode == "auto") {
+    // Auto mode: Regen based on speed, slope, and brake
+    if (brake || (speed >= regenSpeedThreshold && slope <= regenSlopeThreshold)) {
+      if (!pedaling || !pedalOverride) {
+        startRegen(regenPWM);
+      } else {
+        stopRegen();
+      }
+    } else {
+      stopRegen();
+    }
+  }
+
+  delay(200);  // A bit for stability
+}
